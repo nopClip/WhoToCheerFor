@@ -32,14 +32,39 @@ todayGameCount = 0
 finalPos = [0, 0, 0, 0, 0, 0]
 schedFlag = False
 
-homeAdvantage = 0.0342
+# Set one of these four values to be true.
+ptPct = False
+coinFlip = True
+goalDiffOdds = False
+log5 = False
+goalDiffOddsCalc = 'base'  # Either 'log5' or 'base', only used if goalDiffOdds = True
+
+homeAdvantage = 0.0342  # Home teams win 53.42% of games in the 2024-25 season.
+avgPtPct = 0.55  # The average NHL team has a win% of .550
 
 pctMoving = False  # Have Pt% update every simulated game
 teamFocus = "OTT"
 
 
-def gameSimulator(team1name, team1pct, team2name, team2pct):
-    team1odd = team1pct / (team1pct + team2pct)
+def gameSimulator(team1name, team1pct, team2name, team2pct, homeGoalsFor, homeGoalsAgainst, homeGamesPlayed, awayGoalsFor, awayGoalsAgainst, awayGamesPlayed):
+    if ptPct:
+        team1odd = team1pct / (team1pct + team2pct) + homeAdvantage
+    elif coinFlip:
+        team1odd = 0.5 + homeAdvantage
+    elif goalDiffOdds:
+        team1E = ((homeGoalsFor / homeGamesPlayed) + (homeGoalsAgainst / homeGamesPlayed)) ** avgPtPct
+        team1calc = (homeGoalsFor ** team1E)/((homeGoalsFor ** team1E) + (homeGoalsAgainst ** team1E))
+
+        team2E = ((awayGoalsFor / awayGamesPlayed) + (awayGoalsAgainst / awayGamesPlayed)) ** avgPtPct
+        team2calc = (awayGoalsFor ** team2E)/((awayGoalsFor ** team2E) + (awayGoalsAgainst ** team2E))
+
+        if goalDiffOddsCalc == 'log5':
+            team1odd = (team1calc - team1calc * team2calc) / (team1calc + team2calc - 2 * team1calc * team2calc) + homeAdvantage
+        else:
+            team1odd = team1calc / (team1calc + team2calc) + homeAdvantage
+
+    elif log5:
+        team1odd = (team1pct - team1pct * team2pct) / (team1pct + team2pct - 2 * team1pct * team2pct) + homeAdvantage
 
     # Generate a random number from 0-1
     value = random.random()
@@ -81,6 +106,12 @@ def getTodaysGames(dateYear, dateMonth, dateDay):
             'gamesPlayed': int(i['gamesPlayed']),
             'conference': i['conferenceAbbrev'],
             'division': i['divisionAbbrev'],
+            'homeGoalsFor': i['homeGoalsFor'],
+            'homeGoalsAgainst': i['homeGoalsAgainst'],
+            'homeGamesPlayed': i['homeGamesPlayed'],
+            'awayGoalsFor': i['roadGoalsFor'],
+            'awayGoalsAgainst': i['roadGoalsAgainst'],
+            'awayGamesPlayed': i['roadGamesPlayed'],
             'pos1FirstRound': 0,
             'pos2FirstRound': 0,
             'pos3FirstRound': 0,
@@ -106,11 +137,17 @@ def getTodaysGames(dateYear, dateMonth, dateDay):
                 'homeLosses': winPctDict[i['homeTeam']['abbrev']]['losses'],
                 'homeOTLosses': winPctDict[i['homeTeam']['abbrev']]['otl'],
                 'homeGP': winPctDict[i['homeTeam']['abbrev']]['gamesPlayed'],
+                'homeGoalsFor': winPctDict[i['homeTeam']['abbrev']]['homeGoalsFor'],
+                'homeGoalsAgainst': winPctDict[i['homeTeam']['abbrev']]['homeGoalsAgainst'],
+                'gamesPlayedHome': winPctDict[i['homeTeam']['abbrev']]['homeGamesPlayed'],
 
                 'awayWins': winPctDict[i['awayTeam']['abbrev']]['wins'],
                 'awayLosses': winPctDict[i['awayTeam']['abbrev']]['losses'],
                 'awayOTLosses': winPctDict[i['awayTeam']['abbrev']]['otl'],
                 'awayGP': winPctDict[i['awayTeam']['abbrev']]['gamesPlayed'],
+                'awayGoalsFor': winPctDict[i['awayTeam']['abbrev']]['awayGoalsFor'],
+                'awayGoalsAgainst': winPctDict[i['awayTeam']['abbrev']]['awayGoalsAgainst'],
+                'gamesPlayedAway': winPctDict[i['awayTeam']['abbrev']]['awayGamesPlayed'],
 
                 'gameTime': datetime.datetime.strptime(i['startTimeUTC'], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).astimezone(pytz.timezone("America/New_York")),
             }
@@ -137,8 +174,14 @@ def pullRemainingSchedule(pctDict):
                     schedule[gameCounter] = {
                         'home': game['homeTeam']['abbrev'],
                         'homePct': standings[game['homeTeam']['abbrev']]['winPct'],
+                        'homeGoalsFor': standings[game['homeTeam']['abbrev']]['homeGoalsFor'],
+                        'homeGoalsAgainst': standings[game['homeTeam']['abbrev']]['homeGoalsAgainst'],
+                        'homeGamesPlayed': standings[game['homeTeam']['abbrev']]['homeGamesPlayed'],
                         'away': game['awayTeam']['abbrev'],
-                        'awayPct': standings[game['awayTeam']['abbrev']]['winPct']
+                        'awayPct': standings[game['awayTeam']['abbrev']]['winPct'],
+                        'awayGoalsFor': standings[game['awayTeam']['abbrev']]['awayGoalsFor'],
+                        'awayGoalsAgainst': standings[game['awayTeam']['abbrev']]['awayGoalsAgainst'],
+                        'awayGamesPlayed': standings[game['awayTeam']['abbrev']]['awayGamesPlayed'],
                     }
                     gameCounter += 1
             currentDate = currentDate + datetime.timedelta(days=1)
@@ -155,7 +198,7 @@ def simSeason(pctDict, teamFocus):
     # Simulate every remaining game in the NHL Schedule
     for game in schedule:
         # Simulate game
-        winner, decision = gameSimulator(schedule[game]['home'], schedule[game]['homePct'], schedule[game]['away'], schedule[game]['awayPct'])
+        winner, decision = gameSimulator(schedule[game]['home'], schedule[game]['homePct'], schedule[game]['away'], schedule[game]['awayPct'], schedule[game]['homeGoalsFor'], schedule[game]['homeGoalsAgainst'], schedule[game]['homeGamesPlayed'], schedule[game]['awayGoalsFor'], schedule[game]['awayGoalsAgainst'], schedule[game]['awayGamesPlayed'])
 
         # Logic to identify the stats coming out of the game
         if winner == schedule[game]['home']:
@@ -422,7 +465,7 @@ def optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, 
         tempPct[games[game]['away']]['gamesPlayed'] += 1
 
         tempPct[games[game]['home']]['winPct'] = (games[game]['homeWins'] + (0.5 * games[game]['homeOTLosses'])) / (
-        games[game]['homeGP']) + homeAdvantage
+        games[game]['homeGP'])
         tempPct[games[game]['away']]['winPct'] = (games[game]['awayWins'] + (0.5 * games[game]['awayOTLosses'])) / (
         games[game]['awayGP'])
         playoffs, placement, competitor = simSeason(tempPct, teamFocus)

@@ -100,7 +100,7 @@ def getTodaysGames(dateYear, dateMonth, dateDay):
     for i in standings['standings']:
         winPctDict[i['teamAbbrev']['default']] = {
             'winPct': i['pointPctg'],
-            'wins': int(i['regulationPlusOtWins']),
+            'wins': int(i['wins']),
             'losses': int(i['losses']),
             'otl': int(i['otLosses']),
             'gamesPlayed': int(i['gamesPlayed']),
@@ -198,7 +198,7 @@ def simSeason(pctDict, teamFocus):
     # Simulate every remaining game in the NHL Schedule
     for game in schedule:
         # Simulate game
-        winner, decision = gameSimulator(schedule[game]['home'], schedule[game]['homePct'], schedule[game]['away'], schedule[game]['awayPct'], schedule[game]['homeGoalsFor'], schedule[game]['homeGoalsAgainst'], schedule[game]['homeGamesPlayed'], schedule[game]['awayGoalsFor'], schedule[game]['awayGoalsAgainst'], schedule[game]['awayGamesPlayed'])
+        winner, decision = gameSimulator(schedule[game]['home'], standings[schedule[game]['home']]['winPct'], schedule[game]['away'], standings[schedule[game]['away']]['winPct'], schedule[game]['homeGoalsFor'], schedule[game]['homeGoalsAgainst'], schedule[game]['homeGamesPlayed'], schedule[game]['awayGoalsFor'], schedule[game]['awayGoalsAgainst'], schedule[game]['awayGamesPlayed'])
 
         # Logic to identify the stats coming out of the game
         if winner == schedule[game]['home']:

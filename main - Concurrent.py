@@ -32,9 +32,9 @@ todayGameCount = 0
 finalPos = [0, 0, 0, 0, 0, 0]
 schedFlag = False
 
+homeAdvantage = 0.0342
 
-pctMoving = True
-# Have Pt% update every simulated game
+pctMoving = False  # Have Pt% update every simulated game
 teamFocus = "OTT"
 
 
@@ -422,7 +422,7 @@ def optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, 
         tempPct[games[game]['away']]['gamesPlayed'] += 1
 
         tempPct[games[game]['home']]['winPct'] = (games[game]['homeWins'] + (0.5 * games[game]['homeOTLosses'])) / (
-        games[game]['homeGP'])
+        games[game]['homeGP']) + homeAdvantage
         tempPct[games[game]['away']]['winPct'] = (games[game]['awayWins'] + (0.5 * games[game]['awayOTLosses'])) / (
         games[game]['awayGP'])
         playoffs, placement, competitor = simSeason(tempPct, teamFocus)
@@ -500,7 +500,7 @@ if __name__ == '__main__':
         ]
 
         # Despite my most mediocre attempts to get threading to work, I did not.
-        # This doesn't run any faster than jsut running them one at a time.
+        # This doesn't run any faster than just running them one at a time.
         # This is the version that worked the least poorly
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             futures = {executor.submit(optionProcess, *args): args for args in argsList}

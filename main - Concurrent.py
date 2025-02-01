@@ -222,7 +222,7 @@ def simSeason(pctDict, teamFocus):
             standings[schedule[game]['home']]['winPct'] = (standings[schedule[game]['home']]['wins'] + (0.5 * standings[schedule[game]['home']]['otl'])) / standings[schedule[game]['home']]['gamesPlayed']
             standings[schedule[game]['away']]['winPct'] = (standings[schedule[game]['away']]['wins'] + (0.5 * standings[schedule[game]['away']]['otl'])) / standings[schedule[game]['away']]['gamesPlayed']
 
-    # If 'reasess pt%' every game is enabled, reassess the pt% at the end of the season to build the end-of-season standings
+    # If 'reasess pt%' every game is not enabled, reassess the pt% at the end of the season to build the end-of-season standings
     if not pctMoving:
         for i in standings:
             standings[i]['winPct'] = (standings[i]['wins'] + (0.5 * standings[i]['otl'])) / standings[i]['gamesPlayed']

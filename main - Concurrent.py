@@ -16,11 +16,6 @@ import concurrent.futures
 # Today's Games: "https://api-web.nhle.com/v1/schedule/2025-01-18"
 # Game Boxscore: https://api-web.nhle.com/v1/gamecenter/GAME_ID/boxscore
 
-endOfSeason = datetime.date(2025, 4, 18)
-# endOfSeason = datetime.date(2025, 2, 5)
-simulations = 100000
-# simulations = 1000
-
 winPctDict = {}
 games = {}
 outcome = {}
@@ -32,9 +27,16 @@ todayGameCount = 0
 finalPos = [0, 0, 0, 0, 0, 0]
 schedFlag = False
 
+endOfSeason = datetime.date(2025, 4, 18)
+simulations = 100000
+
+## Testing
+# endOfSeason = datetime.date(2025, 2, 5)
+# simulations = 1000
+
 # Set one of these four values to be true.
-ptPct = False
-coinFlip = True
+ptPct = True
+coinFlip = False
 goalDiffOdds = False
 log5 = False
 goalDiffOddsCalc = 'base'  # Either 'log5' or 'base', only used if goalDiffOdds = True
@@ -42,7 +44,7 @@ goalDiffOddsCalc = 'base'  # Either 'log5' or 'base', only used if goalDiffOdds 
 homeAdvantage = 0.0342  # Home teams win 53.42% of games in the 2024-25 season.
 avgPtPct = 0.55  # The average NHL team has a win% of .550
 
-pctMoving = False  # Have Pt% update every simulated game
+pctMoving = True  # Have Pt% update every simulated game
 teamFocus = "OTT"
 
 
@@ -535,10 +537,11 @@ if __name__ == '__main__':
             'awayOT': {},
             'awayWin': {},
         }
+        # optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, game, winPctDict, gameType)
         argsList = [
             (1, 0, 0, 0, 0, 1, game, winPctDict, "homeWin"),
             (1, 0, 0, 0, 1, 0, game, winPctDict, "homeOT"),
-            (0, 0, 1, 1, 0, 1, game, winPctDict, "awayOT"),
+            (0, 1, 0, 1, 0, 0, game, winPctDict, "awayOT"),
             (0, 0, 1, 1, 0, 0, game, winPctDict, "awayWin")
         ]
 

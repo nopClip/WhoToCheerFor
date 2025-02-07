@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import pytz
 import threading
 import concurrent.futures
+from collections import Counter
 
 
 # Today's Games: "https://api-web.nhle.com/v1/schedule/2025-01-18"
@@ -23,9 +24,11 @@ schedule = {}
 oddsMatrix = {}
 firstRound = {}
 tempPct = {}
+teamCounts = Counter()
 todayGameCount = 0
 finalPos = [0, 0, 0, 0, 0, 0]
 schedFlag = False
+preSim = True
 
 endOfSeason = datetime.date(2025, 4, 18)
 simulations = 100000
@@ -35,22 +38,23 @@ simulations = 100000
 # simulations = 1000
 
 # Set one of these four values to be true.
-ptPct = True
+ptPct = False
 coinFlip = False
 goalDiffOdds = False
-log5 = False
+log5 = True
 goalDiffOddsCalc = 'base'  # Either 'log5' or 'base', only used if goalDiffOdds = True
 
 homeAdvantage = 0.0342  # Home teams win 53.42% of games in the 2024-25 season.
 avgPtPct = 0.55  # The average NHL team has a win% of .550
 
-pctMoving = True  # Have Pt% update every simulated game
+pctMoving = False  # Have Pt% update every simulated game
 teamFocus = "OTT"
 
 
 def gameSimulator(team1name, team1pct, team2name, team2pct, homeGoalsFor, homeGoalsAgainst, homeGamesPlayed, awayGoalsFor, awayGoalsAgainst, awayGamesPlayed):
+    team1pct += homeAdvantage
     if ptPct:
-        team1odd = team1pct / (team1pct + team2pct) + homeAdvantage
+        team1odd = team1pct / (team1pct + team2pct)
     elif coinFlip:
         team1odd = 0.5 + homeAdvantage
     elif goalDiffOdds:
@@ -61,12 +65,12 @@ def gameSimulator(team1name, team1pct, team2name, team2pct, homeGoalsFor, homeGo
         team2calc = (awayGoalsFor ** team2E)/((awayGoalsFor ** team2E) + (awayGoalsAgainst ** team2E))
 
         if goalDiffOddsCalc == 'log5':
-            team1odd = (team1calc - team1calc * team2calc) / (team1calc + team2calc - 2 * team1calc * team2calc) + homeAdvantage
+            team1odd = (team1calc - team1calc * team2calc) / (team1calc + team2calc - 2 * team1calc * team2calc)
         else:
-            team1odd = team1calc / (team1calc + team2calc) + homeAdvantage
+            team1odd = team1calc / (team1calc + team2calc)
 
     elif log5:
-        team1odd = (team1pct - team1pct * team2pct) / (team1pct + team2pct - 2 * team1pct * team2pct) + homeAdvantage
+        team1odd = (team1pct - team1pct * team2pct) / (team1pct + team2pct - 2 * team1pct * team2pct)
 
     # Generate a random number from 0-1
     value = random.random()
@@ -235,6 +239,8 @@ def simSeason(pctDict, teamFocus):
 
 
 def playoffProcessor(standings, teamFocus):
+    global teamCounts
+    global preSim
     playoffsFlag = False
     competitor = "None"
     placement = 0
@@ -371,10 +377,28 @@ def playoffProcessor(standings, teamFocus):
                 else:
                     competitor = central[0]
         wwcPos += 1
+
+    # print(atlantic)
+
+    if preSim:
+        for key in atlantic.keys():
+            teamCounts[key] += 1
+        for key in metro.keys():
+            teamCounts[key] += 1
+        for key in central.keys():
+            teamCounts[key] += 1
+        for key in pacific.keys():
+            teamCounts[key] += 1
+        for key in east.keys():
+            teamCounts[key] += 1
+        for key in west.keys():
+            teamCounts[key] += 1
+
     return playoffsFlag, placement, competitor
 
 
 def imageMaker(oddsMatrix, currentOdds, currentMatrix, standings, playoffCount):
+    global teamCounts
     east = {}
     west = {}
 
@@ -402,7 +426,7 @@ def imageMaker(oddsMatrix, currentOdds, currentMatrix, standings, playoffCount):
     # Highlight top and bottom odds for each game
     styled_dfNum = dfNum.style.highlight_max(color= 'green', axis = 0, props='background-color: #BEEAE5; color: black')
     styled_dfNum = styled_dfNum.highlight_min(color = 'red', axis = 0, props='background-color: #FFCFC9; color: black')
-    styled_dfNum.set_caption(f"Senators current playoff odds: {currentOdds:.2%}")
+    styled_dfNum.set_caption(f"{teamFocus} current playoff odds: {currentOdds:.2%}")
 
     # Make em look pretty
     styled_dfNum = styled_dfNum.format(
@@ -448,6 +472,13 @@ def imageMaker(oddsMatrix, currentOdds, currentMatrix, standings, playoffCount):
     df3.set_caption("Prospective First Round Opponents")
     dfi.export(df3, "First Round Opponents.png", table_conversion='matplotlib')
 
+    df4 = pd.DataFrame.from_dict(teamCounts, orient='index', columns=['Count'])
+    df4['Playoff Odds'] = df4['Count'] / simulations * 100
+
+    df4 = df4[['Playoff Odds']].sort_values(by='Playoff Odds', ascending=False)
+    df4 = df4.style.format('{:.2f}%')
+
+    dfi.export(df4, "Team Playoff Odds.png", table_conversion='matplotlib')
 
 def optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, game, winPctDict, gameType):
     # Function to process the possible outcomes of today's games
@@ -466,10 +497,16 @@ def optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, 
         tempPct[games[game]['home']]['gamesPlayed'] += 1
         tempPct[games[game]['away']]['gamesPlayed'] += 1
 
-        tempPct[games[game]['home']]['winPct'] = (games[game]['homeWins'] + (0.5 * games[game]['homeOTLosses'])) / (
-        games[game]['homeGP'])
-        tempPct[games[game]['away']]['winPct'] = (games[game]['awayWins'] + (0.5 * games[game]['awayOTLosses'])) / (
-        games[game]['awayGP'])
+        # tempPct[games[game]['home']]['winPct'] = (games[game]['homeWins'] + (0.5 * games[game]['homeOTLosses'])) / (
+        # games[game]['homeGP'])
+        # tempPct[games[game]['away']]['winPct'] = (games[game]['awayWins'] + (0.5 * games[game]['awayOTLosses'])) / (
+        # games[game]['awayGP'])
+
+        tempPct[games[game]['home']]['winPct'] = (tempPct[games[game]['home']]['wins'] + (
+                    0.5 * tempPct[games[game]['home']]['otl'])) / tempPct[games[game]['home']]['gamesPlayed']
+        tempPct[games[game]['away']]['winPct'] = (tempPct[games[game]['away']]['wins'] + (
+                    0.5 * tempPct[games[game]['away']]['otl'])) / tempPct[games[game]['away']]['gamesPlayed']
+
         playoffs, placement, competitor = simSeason(tempPct, teamFocus)
         tempFinalPos[placement] += 1
         if playoffs:
@@ -538,6 +575,7 @@ if __name__ == '__main__':
             'awayWin': {},
         }
         # optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, game, winPctDict, gameType)
+        preSim = False
         argsList = [
             (1, 0, 0, 0, 0, 1, game, winPctDict, "homeWin"),
             (1, 0, 0, 0, 1, 0, game, winPctDict, "homeOT"),

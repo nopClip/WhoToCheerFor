@@ -1,21 +1,20 @@
 import random
 import requests
-import json
 from datetime import timezone
 import datetime
 import copy
 import pandas as pd
 import dataframe_image as dfi
-import matplotlib
-from zoneinfo import ZoneInfo
+import matplotlib.pyplot as plt
 import pytz
-import threading
 import concurrent.futures
-from collections import Counter
+from collections import Counter, defaultdict
+from tqdm import tqdm
 
 
 # Today's Games: "https://api-web.nhle.com/v1/schedule/2025-01-18"
 # Game Boxscore: https://api-web.nhle.com/v1/gamecenter/GAME_ID/boxscore
+
 
 winPctDict = {}
 games = {}
@@ -29,6 +28,7 @@ todayGameCount = 0
 finalPos = [0, 0, 0, 0, 0, 0]
 schedFlag = False
 preSim = True
+errorFlag = False
 
 endOfSeason = datetime.date(2025, 4, 18)
 simulations = 100000
@@ -48,7 +48,75 @@ homeAdvantage = 0.0342  # Home teams win 53.42% of games in the 2024-25 season.
 avgPtPct = 0.55  # The average NHL team has a win% of .550
 
 pctMoving = False  # Have Pt% update every simulated game
-teamFocus = "OTT"
+teamFocus = "CBJ"
+division = "Metro"
+
+recordTable = {
+    'pos1': {
+        'maxPts': 0,
+        'minPts': 164,
+        'bestRecord': "",
+        'worstRecord': "",
+        'totalWins': 0,
+        'totalLosses': 0,
+        'totalOTL': 0,
+        'remainingWins': 0,
+        'remainingLosses': 0,
+        'remainingOTL': 0
+    }, 'pos2': {
+        'maxPts': 0,
+        'minPts': 164,
+        'bestRecord': "",
+        'worstRecord': "",
+        'totalWins': 0,
+        'totalLosses': 0,
+        'totalOTL': 0,
+        'remainingWins': 0,
+        'remainingLosses': 0,
+        'remainingOTL': 0
+    }, 'pos3': {
+        'maxPts': 0,
+        'minPts': 164,
+        'bestRecord': "",
+        'worstRecord': "",
+        'totalWins': 0,
+        'totalLosses': 0,
+        'totalOTL': 0,
+        'remainingWins': 0,
+        'remainingLosses': 0,
+        'remainingOTL': 0
+    }, 'pos4': {
+        'maxPts': 0,
+        'minPts': 164,
+        'bestRecord': "",
+        'worstRecord': "",
+        'totalWins': 0,
+        'totalLosses': 0,
+        'totalOTL': 0,
+        'remainingWins': 0,
+        'remainingLosses': 0,
+        'remainingOTL': 0
+    }, 'pos5': {
+        'maxPts': 0,
+        'minPts': 164,
+        'bestRecord': "",
+        'worstRecord': "",
+        'totalWins': 0,
+        'totalLosses': 0,
+        'totalOTL': 0,
+        'remainingWins': 0,
+        'remainingLosses': 0,
+        'remainingOTL': 0
+    }
+}
+
+pointTable = defaultdict(lambda: Counter({'First': 0, 'Second': 0, 'Third': 0, 'WC1': 0, 'WC2': 0, 'Missed Playoffs': 0}))
+totalPointTable = defaultdict(lambda: Counter({'First': 0, 'Second': 0, 'Third': 0, 'WC1': 0, 'WC2': 0, 'Missed Playoffs': 0}))
+
+# opt1 = {}
+# opt2 = {}
+# opt3 = {}
+# opt4 = {}
 
 
 def gameSimulator(team1name, team1pct, team2name, team2pct, homeGoalsFor, homeGoalsAgainst, homeGamesPlayed, awayGoalsFor, awayGoalsAgainst, awayGamesPlayed):
@@ -109,6 +177,7 @@ def getTodaysGames(dateYear, dateMonth, dateDay):
             'wins': int(i['wins']),
             'losses': int(i['losses']),
             'otl': int(i['otLosses']),
+            'points': int(i['points']),
             'gamesPlayed': int(i['gamesPlayed']),
             'conference': i['conferenceAbbrev'],
             'division': i['divisionAbbrev'],
@@ -235,7 +304,7 @@ def simSeason(pctDict, teamFocus):
 
     # Run the playoff processor
     makePlayoffs, placement, competitor = playoffProcessor(standings, teamFocus)
-    return makePlayoffs, placement, competitor
+    return makePlayoffs, placement, competitor, standings
 
 
 def playoffProcessor(standings, teamFocus):
@@ -368,14 +437,14 @@ def playoffProcessor(standings, teamFocus):
             playoffsFlag = True
             if wwcPos == 4:
                 if next(iter(central.values()))['winPct'] > next(iter(pacific.values()))['winPct']:
-                    competitor = pacific[0]
+                    competitor = list(pacific.keys())[0]
                 else:
-                    competitor = central[0]
+                    competitor = list(central.keys())[0]
             elif wwcPos == 5:
                 if next(iter(central.values()))['winPct'] < next(iter(pacific.values()))['winPct']:
-                    competitor = pacific[0]
+                    competitor = list(pacific.keys())[0]
                 else:
-                    competitor = central[0]
+                    competitor = list(central.keys())[0]
         wwcPos += 1
 
     # print(atlantic)
@@ -399,6 +468,7 @@ def playoffProcessor(standings, teamFocus):
 
 def imageMaker(oddsMatrix, currentOdds, currentMatrix, standings, playoffCount):
     global teamCounts
+    global recordTable
     east = {}
     west = {}
 
@@ -414,32 +484,11 @@ def imageMaker(oddsMatrix, currentOdds, currentMatrix, standings, playoffCount):
     # west = dict(sorted(west.items(), key=lambda item: item[1]['firstRoundTotal'], reverse=True))
     east = {team: data for team, data in east.items() if data.get("firstRoundTotal", 0) != 0}
 
-    # Making the dataframe for today's games impact on the odds
-    df = pd.DataFrame()
-    dfNum = pd.DataFrame()
-    for i in oddsMatrix:
-        df[oddsMatrix[i]['game']] = [oddsMatrix[i]['awayWin']['oddsDiff'], oddsMatrix[i]['awayOT']['oddsDiff'], oddsMatrix[i]['homeOT']['oddsDiff'], oddsMatrix[i]['homeWin']['oddsDiff']]
-        dfNum[f"{oddsMatrix[i]['game']}\n{oddsMatrix[i]['gameTime']}"] = [oddsMatrix[i]['awayWin']['oddsDiffNum'], oddsMatrix[i]['awayOT']['oddsDiffNum'], oddsMatrix[i]['homeOT']['oddsDiffNum'], oddsMatrix[i]['homeWin']['oddsDiffNum']]
-    df.index = ['Away Win', 'Away OTW', 'Home OTW', 'Home Win']
-    dfNum.index = ['Away Win', 'Away OTW', 'Home OTW', 'Home Win']
-
-    # Highlight top and bottom odds for each game
-    styled_dfNum = dfNum.style.highlight_max(color= 'green', axis = 0, props='background-color: #BEEAE5; color: black')
-    styled_dfNum = styled_dfNum.highlight_min(color = 'red', axis = 0, props='background-color: #FFCFC9; color: black')
-    styled_dfNum.set_caption(f"{teamFocus} current playoff odds: {currentOdds:.2%}")
-
-    # Make em look pretty
-    styled_dfNum = styled_dfNum.format(
-        lambda x:f'+{x:.2f}%' if x > 0 else f'{x:.2f}%', precision = 2
-    )
-
-    dfi.export(styled_dfNum, 'Odds.png', table_conversion='matplotlib')
-
     # Make the Playoff Position dataframe
     df2 = pd.DataFrame()
     df2["Finish %"] = [f"{currentMatrix[1]/simulations:.2%}", f"{currentMatrix[2]/simulations:.2%}", f"{currentMatrix[3]/simulations:.2%}", f"{currentMatrix[4]/simulations:.2%}", f"{currentMatrix[5]/simulations:.2%}", f"{currentMatrix[0]/simulations:.2%}"]
 
-    df2.index = ['Atlantic - 1', 'Atlantic - 2', 'Atlantic - 3', 'Wild Card 1', 'Wild Card 2', 'Miss Playoffs']
+    df2.index = [f'{division} - 1', f'{division} - 2', f'{division} - 3', 'Wild Card 1', 'Wild Card 2', 'Miss Playoffs']
     print(df2)
     dfi.export(df2, 'Positioning.png', table_conversion='matplotlib')
 
@@ -459,16 +508,29 @@ def imageMaker(oddsMatrix, currentOdds, currentMatrix, standings, playoffCount):
 
     # Print the rows into the dataframe one by one
     for i in east:
-        rows.append([i, standings[i]['pos1FirstRound']/currentMatrix[1]*100, standings[i]['pos2FirstRound']/currentMatrix[2]*100, standings[i]['pos3FirstRound']/currentMatrix[3]*100, standings[i]['pos4FirstRound']/currentMatrix[4]*100, standings[i]['pos5FirstRound']/currentMatrix[5]*100, standings[i]['firstRoundTotal']/playoffCount*100])
+        rows.append([i, standings[i]['pos1FirstRound'] / currentMatrix[1] * 100,
+                     standings[i]['pos2FirstRound'] / currentMatrix[2] * 100,
+                     standings[i]['pos3FirstRound'] / currentMatrix[3] * 100,
+                     standings[i]['pos4FirstRound'] / currentMatrix[4] * 100,
+                     standings[i]['pos5FirstRound'] / currentMatrix[5] * 100,
+                     standings[i]['firstRoundTotal'] / playoffCount * 100])
+
+    for i in west:
+        rows.append([i, standings[i]['pos1FirstRound'] / currentMatrix[1] * 100,
+                     standings[i]['pos2FirstRound'] / currentMatrix[2] * 100,
+                     standings[i]['pos3FirstRound'] / currentMatrix[3] * 100,
+                     standings[i]['pos4FirstRound'] / currentMatrix[4] * 100,
+                     standings[i]['pos5FirstRound'] / currentMatrix[5] * 100,
+                     standings[i]['firstRoundTotal'] / playoffCount * 100])
 
     # Add the column headers
-    df3 = pd.DataFrame(rows, columns=["Team", "Atlantic - 1", "Atlantic - 2", "Atlantic - 3", "Wild Card 1", "Wild Card 2", "Total %"])
+    df3 = pd.DataFrame(rows, columns=["Team", f"{division} - 1", f"{division} - 2", f"{division} - 3", "Wild Card 1", "Wild Card 2", "Total %"])
 
     # Make it look pretty
     df3.set_index('Team', inplace=True)
     df3.columns = [col[:12] for col in df3.columns]
     df3 = df3.style.highlight_max(color='green', axis=0, props='background-color: #BEEAE5; color: black')
-    df3 = df3.format('{:.2f}%', subset=["Atlantic - 1", "Atlantic - 2", "Atlantic - 3", "Wild Card 1", "Wild Card 2", "Total %"])
+    df3 = df3.format('{:.2f}%', subset=[f"{division} - 1", f"{division} - 2", f"{division} - 3", "Wild Card 1", "Wild Card 2", "Total %"])
     df3.set_caption("Prospective First Round Opponents")
     dfi.export(df3, "First Round Opponents.png", table_conversion='matplotlib')
 
@@ -480,39 +542,105 @@ def imageMaker(oddsMatrix, currentOdds, currentMatrix, standings, playoffCount):
 
     dfi.export(df4, "Team Playoff Odds.png", table_conversion='matplotlib')
 
+    df5 = pd.DataFrame(columns=['Position', 'Odds', 'Max Pts', 'Min Pts', 'Avg. Required Record', 'Avg. Pts', 'Avg. Remaining Record', 'Avg. Remaining Pts'])
+    df5.loc[len(df5)] = [f"{division} - 1", f"{currentMatrix[1]/simulations:.2%}", recordTable['pos1']['maxPts'], recordTable['pos1']['minPts'], f"{round(recordTable['pos1']['totalWins']/currentMatrix[1],1)} - {round(recordTable['pos1']['totalLosses']/currentMatrix[1],1)} - {round(recordTable['pos1']['totalOTL']/currentMatrix[1],1)}", round(((recordTable['pos1']['totalWins'] * 2) + recordTable['pos1']['totalOTL'])/currentMatrix[1],1), f"{round(recordTable['pos1']['remainingWins']/currentMatrix[1],1)} - {round(recordTable['pos1']['remainingLosses']/currentMatrix[1],1)} - {round(recordTable['pos1']['remainingOTL']/currentMatrix[1],1)}", round(((recordTable['pos1']['remainingWins'] * 2) + recordTable['pos1']['remainingOTL'])/currentMatrix[1],1)]
+    df5.loc[len(df5)] = [f"{division} - 2", f"{currentMatrix[2]/simulations:.2%}", recordTable['pos2']['maxPts'], recordTable['pos2']['minPts'], f"{round(recordTable['pos2']['totalWins']/currentMatrix[2],1)} - {round(recordTable['pos2']['totalLosses']/currentMatrix[2],1)} - {round(recordTable['pos2']['totalOTL']/currentMatrix[2],1)}", round(((recordTable['pos2']['totalWins'] * 2) + recordTable['pos2']['totalOTL'])/currentMatrix[2],1), f"{round(recordTable['pos2']['remainingWins']/currentMatrix[2],1)} - {round(recordTable['pos2']['remainingLosses']/currentMatrix[2],1)} - {round(recordTable['pos2']['remainingOTL']/currentMatrix[2],1)}", round(((recordTable['pos2']['remainingWins'] * 2) + recordTable['pos2']['remainingOTL'])/currentMatrix[2],1)]
+    df5.loc[len(df5)] = [f"{division} - 3", f"{currentMatrix[3]/simulations:.2%}", recordTable['pos3']['maxPts'], recordTable['pos3']['minPts'], f"{round(recordTable['pos3']['totalWins']/currentMatrix[3],1)} - {round(recordTable['pos3']['totalLosses']/currentMatrix[3],1)} - {round(recordTable['pos3']['totalOTL']/currentMatrix[3],1)}", round(((recordTable['pos3']['totalWins'] * 2) + recordTable['pos3']['totalOTL'])/currentMatrix[3],1), f"{round(recordTable['pos3']['remainingWins']/currentMatrix[3],1)} - {round(recordTable['pos3']['remainingLosses']/currentMatrix[3],1)} - {round(recordTable['pos3']['remainingOTL']/currentMatrix[3],1)}", round(((recordTable['pos3']['remainingWins'] * 2) + recordTable['pos3']['remainingOTL'])/currentMatrix[3],1)]
+    df5.loc[len(df5)] = ["Wild Card 1", f"{currentMatrix[4]/simulations:.2%}", recordTable['pos4']['maxPts'], recordTable['pos4']['minPts'], f"{round(recordTable['pos4']['totalWins']/currentMatrix[4],1)} - {round(recordTable['pos4']['totalLosses']/currentMatrix[4],1)} - {round(recordTable['pos4']['totalOTL']/currentMatrix[4],1)}", round(((recordTable['pos4']['totalWins'] * 2) + recordTable['pos4']['totalOTL'])/currentMatrix[4],1), f"{round(recordTable['pos4']['remainingWins']/currentMatrix[4],1)} - {round(recordTable['pos4']['remainingLosses']/currentMatrix[4],1)} - {round(recordTable['pos4']['remainingOTL']/currentMatrix[4],1)}", round(((recordTable['pos4']['remainingWins'] * 2) + recordTable['pos4']['remainingOTL'])/currentMatrix[4],1)]
+    df5.loc[len(df5)] = ["Wild Card 2", f"{currentMatrix[5]/simulations:.2%}", recordTable['pos5']['maxPts'], recordTable['pos5']['minPts'], f"{round(recordTable['pos5']['totalWins']/currentMatrix[5],1)} - {round(recordTable['pos5']['totalLosses']/currentMatrix[5],1)} - {round(recordTable['pos5']['totalOTL']/currentMatrix[5],1)}", round(((recordTable['pos5']['totalWins'] * 2) + recordTable['pos5']['totalOTL'])/currentMatrix[5],1), f"{round(recordTable['pos5']['remainingWins']/currentMatrix[5],1)} - {round(recordTable['pos5']['remainingLosses']/currentMatrix[5],1)} - {round(recordTable['pos5']['remainingOTL']/currentMatrix[5],1)}", round(((recordTable['pos5']['remainingWins'] * 2) + recordTable['pos5']['remainingOTL'])/currentMatrix[5],1)]
+
+    styledf5 = df5.style.hide()
+    styledf5 = styledf5.format('{:.1f}', subset=["Avg. Pts", "Avg. Remaining Pts"])
+    styledf5 = styledf5.set_properties(subset=['Position'], **{'font-weight': 'bold'})
+
+    dfi.export(styledf5, "Record Table.png", table_conversion='matplotlib')
+
+    # Make graphs
+    df6 = pd.DataFrame.from_dict(pointTable, orient='index').sort_index()
+    df6Normalized = df6.div(df6.sum(axis=1), axis=0) * 100
+    plt.figure(figsize=(10,6))
+    df6Normalized.plot(kind='area', stacked=True, cmap='viridis', alpha=0.8)
+
+    plt.title("Position Distribution by Remaining Points")
+    plt.xlabel("Points")
+    plt.ylabel("Percentage (%)")
+    plt.legend(title="Position")
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+    plt.savefig("Position Distribution by Remaining Points", dpi=300, bbox_inches='tight')
+
+    df7 = pd.DataFrame.from_dict(totalPointTable, orient='index').sort_index()
+    df7Normalized = df7.div(df7.sum(axis=1), axis=0) * 100
+    plt.figure(figsize=(10,6))
+    df7Normalized.plot(kind='area', stacked=True, cmap='viridis', alpha=0.8)
+
+    plt.title("Position Distribution by Total Points")
+    plt.xlabel("Points")
+    plt.ylabel("Percentage (%)")
+    plt.legend(title="Position")
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+
+    plt.savefig("Position Distribution by Total Points", dpi=300, bbox_inches='tight')
+
+    # Making the dataframe for today's games impact on the odds
+    df = pd.DataFrame(columns=['Games'])
+    df.loc[len(df)] = ["No Games Today"]
+    dfi.export(df, 'Odds.png', table_conversion='matplotlib')
+
+    df = pd.DataFrame()
+    dfNum = pd.DataFrame()
+    for i in oddsMatrix:
+        df[oddsMatrix[i]['game']] = [oddsMatrix[i]['awayWin']['oddsDiff'], oddsMatrix[i]['awayOT']['oddsDiff'],
+                                     oddsMatrix[i]['homeOT']['oddsDiff'], oddsMatrix[i]['homeWin']['oddsDiff']]
+        dfNum[f"{oddsMatrix[i]['game']}\n{oddsMatrix[i]['gameTime']}"] = [oddsMatrix[i]['awayWin']['oddsDiffNum'],
+                                                                          oddsMatrix[i]['awayOT']['oddsDiffNum'],
+                                                                          oddsMatrix[i]['homeOT']['oddsDiffNum'],
+                                                                          oddsMatrix[i]['homeWin']['oddsDiffNum']]
+    df.index = ['Away Win', 'Away OTW', 'Home OTW', 'Home Win']
+    dfNum.index = ['Away Win', 'Away OTW', 'Home OTW', 'Home Win']
+
+    # Highlight top and bottom odds for each game
+    styled_dfNum = dfNum.style.highlight_max(color='green', axis=0, props='background-color: #BEEAE5; color: black')
+    styled_dfNum = styled_dfNum.highlight_min(color='red', axis=0, props='background-color: #FFCFC9; color: black')
+    styled_dfNum.set_caption(f"{teamFocus} current playoff odds: {currentOdds:.2%}")
+
+    # Make em look pretty
+    styled_dfNum = styled_dfNum.format(
+        lambda x: f'+{x:.2f}%' if x > 0 else f'{x:.2f}%', precision=2
+    )
+    try:
+        dfi.export(styled_dfNum, 'Odds.png', table_conversion='matplotlib')
+    except Exception as e:
+        print("Error in Odds table, no games today.")
+
+
 def optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, game, winPctDict, gameType):
     # Function to process the possible outcomes of today's games
     playoffCount = 0
     tempFinalPos = copy.deepcopy(finalPos)
 
     # Add the necessary values to the dict
-    for i in range(0, simulations):
-        tempPct = copy.deepcopy(winPctDict)
-        tempPct[games[game]['home']]['wins'] += homeWins
-        tempPct[games[game]['home']]['otl'] += homeOTL
-        tempPct[games[game]['home']]['losses'] += homeLosses
-        tempPct[games[game]['away']]['wins'] += awayWins
-        tempPct[games[game]['away']]['otl'] += awayOTL
-        tempPct[games[game]['away']]['losses'] += awayLosses
-        tempPct[games[game]['home']]['gamesPlayed'] += 1
-        tempPct[games[game]['away']]['gamesPlayed'] += 1
+    tempPct = copy.deepcopy(winPctDict)
+    tempPct[games[game]['home']]['wins'] += homeWins
+    tempPct[games[game]['home']]['otl'] += homeOTL
+    tempPct[games[game]['home']]['losses'] += homeLosses
+    tempPct[games[game]['away']]['wins'] += awayWins
+    tempPct[games[game]['away']]['otl'] += awayOTL
+    tempPct[games[game]['away']]['losses'] += awayLosses
+    tempPct[games[game]['home']]['gamesPlayed'] += 1
+    tempPct[games[game]['away']]['gamesPlayed'] += 1
 
-        # tempPct[games[game]['home']]['winPct'] = (games[game]['homeWins'] + (0.5 * games[game]['homeOTLosses'])) / (
-        # games[game]['homeGP'])
-        # tempPct[games[game]['away']]['winPct'] = (games[game]['awayWins'] + (0.5 * games[game]['awayOTLosses'])) / (
-        # games[game]['awayGP'])
-
-        tempPct[games[game]['home']]['winPct'] = (tempPct[games[game]['home']]['wins'] + (
-                    0.5 * tempPct[games[game]['home']]['otl'])) / tempPct[games[game]['home']]['gamesPlayed']
-        tempPct[games[game]['away']]['winPct'] = (tempPct[games[game]['away']]['wins'] + (
-                    0.5 * tempPct[games[game]['away']]['otl'])) / tempPct[games[game]['away']]['gamesPlayed']
-
-        playoffs, placement, competitor = simSeason(tempPct, teamFocus)
+    tempPct[games[game]['home']]['winPct'] = (tempPct[games[game]['home']]['wins'] + (
+            0.5 * tempPct[games[game]['home']]['otl'])) / tempPct[games[game]['home']]['gamesPlayed']
+    tempPct[games[game]['away']]['winPct'] = (tempPct[games[game]['away']]['wins'] + (
+            0.5 * tempPct[games[game]['away']]['otl'])) / tempPct[games[game]['away']]['gamesPlayed']
+    for i in tqdm(range(0, simulations), desc=f"Simulating Season - {gameType}", unit="sim"):
+        playoffs, placement, competitor, ignore = simSeason(tempPct, teamFocus)
         tempFinalPos[placement] += 1
         if playoffs:
             playoffCount += 1
 
-    print(f"{games[game]['home']} v. {games[game]['away']} - {gameType}: {playoffCount / simulations:.2%}")
+    # print(f"\n{games[game]['home']} v. {games[game]['away']} - {gameType}: {playoffCount / simulations:.2%}")
 
     # Make it look pretty despite the fact that oddsDiff doesn't get used anymore
     if (playoffCount / simulations) - currentOdds > 0:
@@ -531,37 +659,141 @@ def optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, 
 if __name__ == '__main__':
     startTime = datetime.datetime.now()
     currentDate = datetime.date.today()
+    # currentDate = datetime.date(2025, 2, 9)
     print("Pulling today's games")
     getTodaysGames(currentDate.year, '{:02d}'.format(currentDate.month), '{:02d}'.format(currentDate.day))
 
     currentPlayoffCount = 0
-    tempFinalPos = copy.deepcopy(finalPos)
     print("Identifying current odds")
-    for i in range(0, simulations):
-        tempPct = copy.deepcopy(winPctDict)
-        playoffs, placement, competitor = simSeason(tempPct, teamFocus)
+    tempFinalPos = copy.deepcopy(finalPos)
+    tempPctBck = copy.deepcopy(winPctDict)
+    for i in tqdm(range(0, simulations), desc="Simulating Season", unit="sim"):
+        playoffs, placement, competitor, tempPct = simSeason(tempPctBck, teamFocus)
         if competitor != "None":
             winPctDict[competitor]['firstRoundTotal'] += 1
         if placement == 1:
             winPctDict[competitor]['pos1FirstRound'] += 1
+            pointTable[(((tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']) * 2) +
+                        (tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']))]['First'] += 1
+            totalPointTable[(tempPct[teamFocus]['wins'] * 2 + tempPct[teamFocus]['otl'])]['First'] += 1
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] > recordTable['pos1']['maxPts']:
+                recordTable['pos1']['maxPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos1']['bestRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] < recordTable['pos1']['minPts']:
+                recordTable['pos1']['minPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos1']['worstRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+
+            recordTable['pos1']['totalWins'] += tempPct[teamFocus]['wins']
+            recordTable['pos1']['totalLosses'] += tempPct[teamFocus]['losses']
+            recordTable['pos1']['totalOTL'] += tempPct[teamFocus]['otl']
+
+            recordTable['pos1']['remainingWins'] += tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']
+            recordTable['pos1']['remainingLosses'] += tempPct[teamFocus]['losses'] - winPctDict[teamFocus]['losses']
+            recordTable['pos1']['remainingOTL'] += tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']
+
         elif placement == 2:
             winPctDict[competitor]['pos2FirstRound'] += 1
+            pointTable[(((tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']) * 2) +
+                        (tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']))]['Second'] += 1
+            totalPointTable[(tempPct[teamFocus]['wins'] * 2 + tempPct[teamFocus]['otl'])]['Second'] += 1
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] > recordTable['pos2']['maxPts']:
+                recordTable['pos2']['maxPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos2'][
+                    'bestRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] < recordTable['pos2']['minPts']:
+                recordTable['pos2']['minPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos2'][
+                    'worstRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+
+            recordTable['pos2']['totalWins'] += tempPct[teamFocus]['wins']
+            recordTable['pos2']['totalLosses'] += tempPct[teamFocus]['losses']
+            recordTable['pos2']['totalOTL'] += tempPct[teamFocus]['otl']
+
+            recordTable['pos2']['remainingWins'] += tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']
+            recordTable['pos2']['remainingLosses'] += tempPct[teamFocus]['losses'] - winPctDict[teamFocus]['losses']
+            recordTable['pos2']['remainingOTL'] += tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']
+
         elif placement == 3:
             winPctDict[competitor]['pos3FirstRound'] += 1
+            pointTable[(((tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins'])* 2) +
+                        (tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']))]['Third'] += 1
+            totalPointTable[(tempPct[teamFocus]['wins'] * 2 + tempPct[teamFocus]['otl'])]['Third'] += 1
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] > recordTable['pos3']['maxPts']:
+                recordTable['pos3']['maxPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos3'][
+                    'bestRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] < recordTable['pos3']['minPts']:
+                recordTable['pos3']['minPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos3'][
+                    'worstRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+
+            recordTable['pos3']['totalWins'] += tempPct[teamFocus]['wins']
+            recordTable['pos3']['totalLosses'] += tempPct[teamFocus]['losses']
+            recordTable['pos3']['totalOTL'] += tempPct[teamFocus]['otl']
+
+            recordTable['pos3']['remainingWins'] += tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']
+            recordTable['pos3']['remainingLosses'] += tempPct[teamFocus]['losses'] - winPctDict[teamFocus]['losses']
+            recordTable['pos3']['remainingOTL'] += tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']
+
         elif placement == 4:
             winPctDict[competitor]['pos4FirstRound'] += 1
+            pointTable[(((tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']) * 2) +
+                        (tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']))]['WC1'] += 1
+            totalPointTable[(tempPct[teamFocus]['wins'] * 2 + tempPct[teamFocus]['otl'])]['WC1'] += 1
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] > recordTable['pos4']['maxPts']:
+                recordTable['pos4']['maxPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos4'][
+                    'bestRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] < recordTable['pos4']['minPts']:
+                recordTable['pos4']['minPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos4'][
+                    'worstRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+
+            recordTable['pos4']['totalWins'] += tempPct[teamFocus]['wins']
+            recordTable['pos4']['totalLosses'] += tempPct[teamFocus]['losses']
+            recordTable['pos4']['totalOTL'] += tempPct[teamFocus]['otl']
+
+            recordTable['pos4']['remainingWins'] += tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']
+            recordTable['pos4']['remainingLosses'] += tempPct[teamFocus]['losses'] - winPctDict[teamFocus]['losses']
+            recordTable['pos4']['remainingOTL'] += tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']
+
         elif placement == 5:
             winPctDict[competitor]['pos5FirstRound'] += 1
+            pointTable[(((tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']) * 2) +
+                        (tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']))]['WC2'] += 1
+            totalPointTable[(tempPct[teamFocus]['wins'] * 2 + tempPct[teamFocus]['otl'])]['WC2'] += 1
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] > recordTable['pos5']['maxPts']:
+                recordTable['pos5']['maxPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos5'][
+                    'bestRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+            if (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl'] < recordTable['pos5']['minPts']:
+                recordTable['pos5']['minPts'] = (tempPct[teamFocus]['wins'] * 2) + tempPct[teamFocus]['otl']
+                recordTable['pos5'][
+                    'worstRecord'] = f"{tempPct[teamFocus]['wins']}-{tempPct[teamFocus]['losses']}-{tempPct[teamFocus]['otl']}"
+
+            recordTable['pos5']['totalWins'] += tempPct[teamFocus]['wins']
+            recordTable['pos5']['totalLosses'] += tempPct[teamFocus]['losses']
+            recordTable['pos5']['totalOTL'] += tempPct[teamFocus]['otl']
+
+            recordTable['pos5']['remainingWins'] += tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']
+            recordTable['pos5']['remainingLosses'] += tempPct[teamFocus]['losses'] - winPctDict[teamFocus]['losses']
+            recordTable['pos5']['remainingOTL'] += tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']
 
         tempFinalPos[placement] += 1
         if playoffs:
             currentPlayoffCount += 1
+        else:
+            pointTable[(((tempPct[teamFocus]['wins'] - winPctDict[teamFocus]['wins']) * 2) +
+                        (tempPct[teamFocus]['otl'] - winPctDict[teamFocus]['otl']))]['Missed Playoffs'] += 1
+
+            totalPointTable[(tempPct[teamFocus]['wins'] * 2 + tempPct[teamFocus]['otl'])]['Missed Playoffs'] += 1
     # Current Odds
     print("Current Odds")
     print(tempFinalPos)
     currentOdds = currentPlayoffCount / simulations
     currentMatrix = tempFinalPos
     print(f"{currentPlayoffCount / simulations:.2%}")
+
 
     gameCount = 1
     for game in games:
@@ -576,21 +808,35 @@ if __name__ == '__main__':
         }
         # optionProcess(homeWins, homeOTL, homeLosses, awayWins, awayOTL, awayLosses, game, winPctDict, gameType)
         preSim = False
-        argsList = [
-            (1, 0, 0, 0, 0, 1, game, winPctDict, "homeWin"),
-            (1, 0, 0, 0, 1, 0, game, winPctDict, "homeOT"),
-            (0, 1, 0, 1, 0, 0, game, winPctDict, "awayOT"),
-            (0, 0, 1, 1, 0, 0, game, winPctDict, "awayWin")
-        ]
 
+        # opt1 = copy.deepcopy(winPctDict)
+        # opt2 = copy.deepcopy(winPctDict)
+        # opt3 = copy.deepcopy(winPctDict)
+        # opt4 = copy.deepcopy(winPctDict)
+
+        # argsList = [
+        #     (1, 0, 0, 0, 0, 1, game, winPctDict, "homeWin"),
+        #     (1, 0, 0, 0, 1, 0, game, winPctDict, "homeOT"),
+        #     (0, 1, 0, 1, 0, 0, game, winPctDict, "awayOT"),
+        #     (0, 0, 1, 1, 0, 0, game, winPctDict, "awayWin")
+        # ]
+
+        # argsList = [
+        #     (1, 0, 0, 0, 0, 1, game, opt1, "homeWin"),
+        #     (1, 0, 0, 0, 1, 0, game, opt2, "homeOT"),
+        #     (0, 1, 0, 1, 0, 0, game, opt3, "awayOT"),
+        #     (0, 0, 1, 1, 0, 0, game, opt4, "awayWin")
+        # ]
         # Despite my most mediocre attempts to get threading to work, I did not.
         # This doesn't run any faster than just running them one at a time.
         # This is the version that worked the least poorly
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {executor.submit(optionProcess, *args): args for args in argsList}
+        # with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        #     futures = {executor.submit(optionProcess, *args): args for args in argsList}
+        #
+        #     for future in concurrent.futures.as_completed(futures):
+        #         future.result()
 
-            for future in concurrent.futures.as_completed(futures):
-                future.result()
+
 
         ## Threading attempt one.
         # t1 = threading.Thread(target=optionProcess, args=(1, 0, 0, 0, 0, 1, winPctDict, "homeWin"))  # Home Win
@@ -608,13 +854,14 @@ if __name__ == '__main__':
         # t3.join()
         # t4.join()
 
-        ## Running one at a time
-        # optionProcess(1, 0, 0, 0, 0, 1, winPctDict, "homeWin")  # Home Win
-        # optionProcess(1, 0, 0, 0, 1, 0, winPctDict, 'homeOT')  # Home OTW
-        # optionProcess(0, 0, 1, 1, 0, 1, winPctDict, 'awayOT')  # Away OTW
-        # optionProcess(0, 0, 1, 1, 0, 0, winPctDict, "awayWin")  # Away Win
+        # Running one at a time
+        optionProcess(1, 0, 0, 0, 0, 1, game, winPctDict, "homeWin")  # Home Win
+        optionProcess(1, 0, 0, 0, 1, 0, game, winPctDict, 'homeOT')  # Home OTW
+        optionProcess(0, 0, 1, 1, 0, 1, game, winPctDict, 'awayOT')  # Away OTW
+        optionProcess(0, 0, 1, 1, 0, 0, game, winPctDict, "awayWin")  # Away Win
 
         gameCount += 1
+
     imageMaker(oddsMatrix, currentOdds, currentMatrix, winPctDict, currentPlayoffCount)
 
     completionTime = datetime.datetime.now()
